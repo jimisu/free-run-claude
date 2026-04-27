@@ -9,6 +9,10 @@ network error.
 
 import datetime
 import sys
+import time
+
+MAX_RETRIES = 3  # number of retry attempts for network call
+RETRY_DELAY = 2   # seconds to wait between retries
 
 try:
     import requests  # pragma: no cover
@@ -20,6 +24,9 @@ except Exception:  # pragma: no cover
 # --------------------------------------------------
 
 def _fetch_online() -> float:
+    """Fetch the latest closing price from Yahoo Finance with retry logic.
+    Retries up to ``MAX_RETRIES`` times if a transient network error occurs.
+    """
     if not requests:  # pragma: no cover
         raise RuntimeError("requests library not available")
 
@@ -33,9 +40,17 @@ def _fetch_online() -> float:
     )
     headers = {"User-Agent": "StockPriceScript/1.0"}
 
-    resp = requests.get(url, headers=headers, timeout=10)
-    if resp.status_code != 200:
-        raise ValueError(f"HTTP {resp.status_code}: {resp.reason}")
+    for attempt in range(1, MAX_RETRIES + 1):
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            break
+        # 非 200 代表可能是暫時性問題，稍等後重試
+        print(f"[Retry {attempt}] HTTP {resp.status_code}: {resp.reason}", file=sys.stderr)
+        if attempt < MAX_RETRIES:
+            time.sleep(RETRY_DELAY)
+    else:
+        raise ValueError(f"Failed after {MAX_RETRIES} attempts, last status: {resp.status_code}")
+
     if not resp.text.strip():
         raise ValueError("Empty response from Yahoo Finance")
 
@@ -57,21 +72,19 @@ def _fetch_online() -> float:
 # --------------------------------------------------
 
 def get_latest_price() -> tuple[float, str]:
-    try:
-        price = _fetch_online()
-        return price, "online"
-    except Exception:
-        # Fallback: use a static value (auto‑mode friendly)
-        return 620.0, "fallback"
+    """Return the latest price fetched from Yahoo Finance.
+    If the request fails, the exception is propagated so the caller can see the error.
+    """
+    price = _fetch_online()
+    return price, "online"
 
 # --------------------------------------------------
 # CLI behaviour – just print to stdout
 # --------------------------------------------------
 if __name__ == "__main__":
-    price, src = get_latest_price()
-    if src == "online":
+    try:
+        price, src = get_latest_price()
         print(f"2330.TW closing price (today, online): {price}")
-    else:
-        print(f"2330.TW closing price (today, fallback): {price}")
-        print("(Live lookup not available – running in auto‑mode offline)", file=sys.stderr)
-        sys.exit(0)
+    except Exception as e:
+        print("⚠️ 取得價格失敗:", e, file=sys.stderr)
+        sys.exit(1)
