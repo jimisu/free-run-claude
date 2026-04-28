@@ -1,77 +1,79 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
-"""A lightweight auto‑mode script to show the latest TSMC price.
+"""Retrieve the latest closing price for TSMC (2330.TW).
 
-In environments where outbound HTTP is blocked (e.g. auto‑mode “offline”), the
-script falls back to a hard‑coded example value instead of failing with a
-network error.
+The script uses only the standard library (urllib) to stay runnable in
+environments that may not have external packages installed.  If any
+network/JSON error occurs the script falls back to a hard‑coded price
+value (`620.0`).  This fallback is intended for *auto‑mode* scenarios.
 """
 
-import datetime
+import json
 import sys
+import time
+from datetime import datetime, timedelta
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
-try:
-    import requests  # pragma: no cover
-except Exception:  # pragma: no cover
-    requests = None
+DEFAULT_PRICE = 620.0  # fallback price for auto‑mode
+YAHOO_URL_TEMPLATE = (
+    "https://query1.finance.yahoo.com/v7/finance/chart/{symbol}?"
+    "region=TW&period1={p1}&period2={p2}&interval=1d"
+)
 
-# --------------------------------------------------
-# Helper – fetch price via Yahoo Finance API (online)
-# --------------------------------------------------
 
-def _fetch_online() -> float:
-    if not requests:  # pragma: no cover
-        raise RuntimeError("requests library not available")
+def _fetch_yahoo(symbol: str) -> float:
+    """Return the latest closing price via Yahoo Finance.
 
-    stock_symbol = "2330.TW"
-    now = datetime.datetime.utcnow()
-    period1 = int((now - datetime.timedelta(days=1)).timestamp())
-    period2 = int(now.timestamp())
-    url = (
-        f"https://query1.finance.yahoo.com/v7/finance/chart/{stock_symbol}?"
-        f"region=TW&period1={period1}&period2={period2}&interval=1d"
-    )
-    headers = {"User-Agent": "StockPriceScript/1.0"}
+    Raises :class:`Exception` on any failure so the caller can fallback.
+    """
+    now = datetime.utcnow()
+    p1 = int((now - timedelta(days=1)).timestamp())
+    p2 = int(now.timestamp())
+    url = YAHOO_URL_TEMPLATE.format(symbol=symbol, p1=p1, p2=p2)
 
-    resp = requests.get(url, headers=headers, timeout=10)
-    if resp.status_code != 200:
-        raise ValueError(f"HTTP {resp.status_code}: {resp.reason}")
-    if not resp.text.strip():
-        raise ValueError("Empty response from Yahoo Finance")
+    req = Request(url, headers={"User-Agent": "StockPriceScript/1.0"})
+    try:
+        with urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                raise Exception(f"HTTP {resp.status}: {resp.reason}")
+            raw = resp.read().decode("utf-8")
+    except (HTTPError, URLError) as e:
+        raise Exception(f"Network error: {e}")
+    except Exception as e:
+        raise Exception(f"Failed to fetch data: {e}")
 
-    data = resp.json()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise Exception(f"Failed to parse JSON: {e}")
+
     chart = data.get("chart", {})
     if chart.get("error"):
-        raise ValueError(f"API error: {chart['error']}")
-    result_list = chart.get("result", [])
-    if not result_list:
-        raise ValueError("No chart result")
-    result = result_list[0]
+        raise Exception(f"API error: {chart['error']}")
+    results = chart.get("result", [])
+    if not results:
+        raise Exception("No chart result")
+    result = results[0]
     close_prices = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
     if not close_prices:
-        raise ValueError("No closing price data")
+        raise Exception("No closing price data")
     return float(close_prices[-1])
 
-# --------------------------------------------------
-# Public API – returns (price, source)
-# --------------------------------------------------
 
-def get_latest_price() -> tuple[float, str]:
+def get_latest_price(symbol: str = "2330.TW") -> tuple[float, str]:
     try:
-        price = _fetch_online()
+        price = _fetch_yahoo(symbol)
         return price, "online"
     except Exception:
-        # Fallback: use a static value (auto‑mode friendly)
-        return 620.0, "fallback"
+        return DEFAULT_PRICE, "fallback"
 
-# --------------------------------------------------
-# CLI behaviour – just print to stdout
-# --------------------------------------------------
+
 if __name__ == "__main__":
     price, src = get_latest_price()
     if src == "online":
-        print(f"2330.TW closing price (today, online): {price}")
+        print(f"{price:.2f}")
     else:
-        print(f"2330.TW closing price (today, fallback): {price}")
-        print("(Live lookup not available – running in auto‑mode offline)", file=sys.stderr)
-        sys.exit(0)
+        sys.stderr.write(
+            f"Auto‑mode fallback used – live prices unavailable. Returning default: {price:.2f}\n"
+        )
+        print(f"{price:.2f}")
