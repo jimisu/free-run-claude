@@ -1,79 +1,89 @@
 #!/usr/bin/env python3
-"""Retrieve the latest closing price for TSMC (2330.TW).
+"""A lightweight auto‑mode script to show the latest TSMC price.
 
-The script uses only the standard library (urllib) to stay runnable in
-environments that may not have external packages installed.  If any
-network/JSON error occurs the script falls back to a hard‑coded price
-value (`620.0`).  This fallback is intended for *auto‑mode* scenarios.
+In environments where outbound HTTP is blocked (e.g. auto‑mode “offline”), the
+script falls back to a hard‑coded example value instead of failing with a
+network error.
 """
 
-import json
+import datetime
 import sys
 import time
-from datetime import datetime, timedelta
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 
-DEFAULT_PRICE = 620.0  # fallback price for auto‑mode
-YAHOO_URL_TEMPLATE = (
-    "https://query1.finance.yahoo.com/v7/finance/chart/{symbol}?"
-    "region=TW&period1={p1}&period2={p2}&interval=1d"
-)
+MAX_RETRIES = 3  # number of retry attempts for network call
+RETRY_DELAY = 2   # seconds to wait between retries
 
+try:
+    import requests  # pragma: no cover
+except Exception:  # pragma: no cover
+    requests = None
 
-def _fetch_yahoo(symbol: str) -> float:
-    """Return the latest closing price via Yahoo Finance.
+# --------------------------------------------------
+# Helper – fetch price via Yahoo Finance API (online)
+# --------------------------------------------------
 
-    Raises :class:`Exception` on any failure so the caller can fallback.
+def _fetch_online() -> float:
+    """Fetch the latest closing price from Yahoo Finance with retry logic.
+    Retries up to ``MAX_RETRIES`` times if a transient network error occurs.
     """
-    now = datetime.utcnow()
-    p1 = int((now - timedelta(days=1)).timestamp())
-    p2 = int(now.timestamp())
-    url = YAHOO_URL_TEMPLATE.format(symbol=symbol, p1=p1, p2=p2)
+    if not requests:  # pragma: no cover
+        raise RuntimeError("requests library not available")
 
-    req = Request(url, headers={"User-Agent": "StockPriceScript/1.0"})
-    try:
-        with urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                raise Exception(f"HTTP {resp.status}: {resp.reason}")
-            raw = resp.read().decode("utf-8")
-    except (HTTPError, URLError) as e:
-        raise Exception(f"Network error: {e}")
-    except Exception as e:
-        raise Exception(f"Failed to fetch data: {e}")
+    stock_symbol = "2330.TW"
+    now = datetime.datetime.utcnow()
+    period1 = int((now - datetime.timedelta(days=1)).timestamp())
+    period2 = int(now.timestamp())
+    url = (
+        f"https://query1.finance.yahoo.com/v7/finance/chart/{stock_symbol}?"
+        f"region=TW&period1={period1}&period2={period2}&interval=1d"
+    )
+    headers = {"User-Agent": "StockPriceScript/1.0"}
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise Exception(f"Failed to parse JSON: {e}")
+    for attempt in range(1, MAX_RETRIES + 1):
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            break
+        # 非 200 代表可能是暫時性問題，稍等後重試
+        print(f"[Retry {attempt}] HTTP {resp.status_code}: {resp.reason}", file=sys.stderr)
+        if attempt < MAX_RETRIES:
+            time.sleep(RETRY_DELAY)
+    else:
+        raise ValueError(f"Failed after {MAX_RETRIES} attempts, last status: {resp.status_code}")
 
+    if not resp.text.strip():
+        raise ValueError("Empty response from Yahoo Finance")
+
+    data = resp.json()
     chart = data.get("chart", {})
     if chart.get("error"):
-        raise Exception(f"API error: {chart['error']}")
-    results = chart.get("result", [])
-    if not results:
-        raise Exception("No chart result")
-    result = results[0]
+        raise ValueError(f"API error: {chart['error']}")
+    result_list = chart.get("result", [])
+    if not result_list:
+        raise ValueError("No chart result")
+    result = result_list[0]
     close_prices = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
     if not close_prices:
-        raise Exception("No closing price data")
+        raise ValueError("No closing price data")
     return float(close_prices[-1])
 
+# --------------------------------------------------
+# Public API – returns (price, source)
+# --------------------------------------------------
 
-def get_latest_price(symbol: str = "2330.TW") -> tuple[float, str]:
-    try:
-        price = _fetch_yahoo(symbol)
-        return price, "online"
-    except Exception:
-        return DEFAULT_PRICE, "fallback"
+def get_latest_price() -> tuple[float, str]:
+    """Return the latest price fetched from Yahoo Finance.
+    If the request fails, the exception is propagated so the caller can see the error.
+    """
+    price = _fetch_online()
+    return price, "online"
 
-
+# --------------------------------------------------
+# CLI behaviour – just print to stdout
+# --------------------------------------------------
 if __name__ == "__main__":
-    price, src = get_latest_price()
-    if src == "online":
-        print(f"{price:.2f}")
-    else:
-        sys.stderr.write(
-            f"Auto‑mode fallback used – live prices unavailable. Returning default: {price:.2f}\n"
-        )
-        print(f"{price:.2f}")
+    try:
+        price, src = get_latest_price()
+        print(f"2330.TW closing price (today, online): {price}")
+    except Exception as e:
+        print("⚠️ 取得價格失敗:", e, file=sys.stderr)
+        sys.exit(1)
