@@ -10,8 +10,8 @@ git clone https://github.com/jimisu/free-run-claude.git
 cd free-run-claude
 
 # Create & activate virtual env
-python3 -m venv .venv
-source .venv/bin/activate   # Windows → .venv\Scripts\activate
+python3 -m venv venv
+source venv/bin/activate   # Windows → venv\Scripts\activate
 
 # Install deps
 pip install -r requirements.txt
