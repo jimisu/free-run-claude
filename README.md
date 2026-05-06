@@ -1,4 +1,4 @@
-# free-run-claude
+# Sentimental-Quant-Lab
 
 This is a starter template for free-running Claude projects.
 
@@ -6,8 +6,8 @@ This is a starter template for free-running Claude projects.
 
 ```bash
 # Clone the repo
-git clone https://github.com/jimisu/free-run-claude.git
-cd free-run-claude
+git clone https://github.com/jimisu/Sentimental-Quant-Lab.git
+cd Sentimental-Quant-Lab
 
 # Create & activate virtual env
 python3 -m venv venv
@@ -44,3 +44,5 @@ Feel free to open issues or pull requests. Happy hacking! 🚀
 
 MIT © 2026 Jan‑isa
 
+
+目前已完成情緒分析引擎開發
